@@ -29,3 +29,6 @@ Files
 
 Notes
 - The Kaggle Ames dataset is small (~1460 rows). Use cross-validation and regularization for deep learning models.
+
+@imDarshanGK
+
