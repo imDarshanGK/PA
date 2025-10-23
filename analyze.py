@@ -5,7 +5,12 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
-import lightgbm as lgb
+try:
+    import lightgbm as lgb
+    _HAS_LIGHTGBM = True
+except Exception:
+    lgb = None
+    _HAS_LIGHTGBM = False
 
 def analyze_dataset(file_path):
     print("\n=== Ames Housing Dataset Analysis ===\n")
@@ -59,30 +64,36 @@ def analyze_dataset(file_path):
             scaler = StandardScaler()
             X = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
             
-            # LightGBM baseline
-            lgb_model = lgb.LGBMRegressor(random_state=42)
-            scores = cross_val_score(lgb_model, X, y, cv=5, scoring='neg_root_mean_squared_error')
-            rmse_scores = -scores
-            print(f"\nLightGBM 5-fold CV RMSE: {rmse_scores.mean():.0f} ± {rmse_scores.std():.0f}")
-            
-            # Feature importance
-            lgb_model.fit(X, y)
-            importance = pd.DataFrame({
-                'feature': X.columns,
-                'importance': lgb_model.feature_importances_
-            }).sort_values('importance', ascending=False).head(10)
-            
-            print("\nTop 10 important features:")
-            print(importance)
-            
-            # Save feature importance plot
-            plt.figure(figsize=(10, 6))
-            plt.bar(importance['feature'], importance['importance'])
-            plt.xticks(rotation=45, ha='right')
-            plt.title('Top 10 Important Features')
-            plt.tight_layout()
-            plt.savefig('feature_importance.png')
-            print("\nSaved feature importance plot to 'feature_importance.png'")
+            # LightGBM baseline (only if available)
+            if _HAS_LIGHTGBM:
+                try:
+                    lgb_model = lgb.LGBMRegressor(random_state=42)
+                    scores = cross_val_score(lgb_model, X, y, cv=5, scoring='neg_root_mean_squared_error')
+                    rmse_scores = -scores
+                    print(f"\nLightGBM 5-fold CV RMSE: {rmse_scores.mean():.0f} ± {rmse_scores.std():.0f}")
+
+                    # Feature importance
+                    lgb_model.fit(X, y)
+                    importance = pd.DataFrame({
+                        'feature': X.columns,
+                        'importance': lgb_model.feature_importances_
+                    }).sort_values('importance', ascending=False).head(10)
+
+                    print("\nTop 10 important features:")
+                    print(importance)
+
+                    # Save feature importance plot
+                    plt.figure(figsize=(10, 6))
+                    plt.bar(importance['feature'], importance['importance'])
+                    plt.xticks(rotation=45, ha='right')
+                    plt.title('Top 10 Important Features')
+                    plt.tight_layout()
+                    plt.savefig('feature_importance.png')
+                    print("\nSaved feature importance plot to 'feature_importance.png'")
+                except Exception as e:
+                    print(f"LightGBM step failed: {e}")
+            else:
+                print("\nLightGBM not installed; skipping LightGBM baseline and feature importance.")
             
     except Exception as e:
         print(f"Error analyzing dataset: {str(e)}")

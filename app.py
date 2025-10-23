@@ -6,7 +6,12 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
-import xgboost as xgb
+try:
+    import xgboost as xgb
+    _HAS_XGB = True
+except Exception:
+    xgb = None
+    _HAS_XGB = False
 
 st.set_page_config(page_title="AI-Based Predictive House Price Estimation", layout="wide")
 st.title("AI-Based Predictive House Price Estimation")
@@ -28,8 +33,18 @@ target_col = "price"
 cat_cols = df.select_dtypes(include=["object"]).columns.tolist()
 exclude_cols = ["date", "street", "city", "statezip", "country"]
 df_encoded = df.copy()
+
+# Build explicit category -> code mappings so we can encode inputs the same way
+cat_mappings = {}
 for col in cat_cols:
-    df_encoded[col] = df_encoded[col].astype("category").cat.codes
+    cats = df[col].astype('category').cat.categories.tolist()
+    mapping = {c: i for i, c in enumerate(cats)}
+    cat_mappings[col] = {
+        'mapping': mapping,
+        'default_code': mapping.get(df[col].mode().iloc[0]) if not df[col].mode().empty else -1
+    }
+    # map original df to codes
+    df_encoded[col] = df[col].map(mapping).fillna(cat_mappings[col]['default_code']).astype(int)
 y = df_encoded[target_col]
 X = df_encoded.drop(columns=[target_col])
 imp = SimpleImputer(strategy="median")
@@ -38,9 +53,10 @@ scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X_imp)
 
 models = {
-    "XGBoost": xgb.XGBRegressor(random_state=42, n_estimators=200),
     "Linear Regression": LinearRegression()
 }
+if _HAS_XGB:
+    models["XGBoost"] = xgb.XGBRegressor(random_state=42, n_estimators=200)
 model_rmse = {}
 for name, model in models.items():
     model.fit(X_scaled, y)
@@ -55,16 +71,20 @@ st.header("Predict House Price")
 input_features = [col for col in X.columns if col not in exclude_cols]
 defaults = df[input_features].median(numeric_only=True)
 user_input = {}
-int_features = [
-    "bedrooms", "bathrooms", "floors", "waterfront", "view", "condition",
-    "sqft_above", "sqft_basement", "yr_built", "yr_renovated"
-]
-float_features = ["sqft_living", "sqft_lot"]
+
+# Decide numeric vs categorical dynamically from the original dataframe
+numeric_cols = df[input_features].select_dtypes(include=[np.number]).columns.tolist()
 for col in input_features:
-    if col in int_features:
-        user_input[col] = st.number_input(f"{col}", value=int(defaults.get(col, 0)), step=1, format="%d", key=col)
-    elif col in float_features:
-        user_input[col] = st.number_input(f"{col}", value=float(defaults.get(col, 0)), step=0.01, format="%.2f", key=col)
+    if col in numeric_cols:
+        # check if column is integer-like
+        vals = df[col].dropna()
+        is_int_like = False
+        if not vals.empty:
+            is_int_like = np.all(np.mod(vals, 1) == 0)
+        if is_int_like:
+            user_input[col] = st.number_input(f"{col}", value=int(defaults.get(col, 0)), step=1, format="%d", key=col)
+        else:
+            user_input[col] = st.number_input(f"{col}", value=float(defaults.get(col, 0)), step=0.01, format="%.2f", key=col)
     else:
         options = df[col].astype(str).unique().tolist()
         user_input[col] = st.selectbox(f"{col}", options, key=col)
@@ -77,8 +97,17 @@ if st.button("Predict Price", key="predict_btn"):
                 input_df[col] = df[col].median()
             else:
                 input_df[col] = df[col].mode()[0]
+    # encode categorical columns using the saved mappings
     for col in cat_cols:
-        input_df[col] = input_df[col].astype("category").cat.codes
+        if col in input_df.columns:
+            mapping_info = cat_mappings.get(col)
+            if mapping_info is not None:
+                mapping = mapping_info['mapping']
+                default_code = mapping_info['default_code'] if mapping_info.get('default_code') is not None else -1
+                input_df[col] = input_df[col].map(mapping).fillna(default_code).astype(int)
+            else:
+                # fallback
+                input_df[col] = input_df[col].astype('category').cat.codes
     input_df = input_df.reindex(columns=X.columns)
     input_imp = imp.transform(input_df)
     input_scaled = scaler.transform(input_imp)
